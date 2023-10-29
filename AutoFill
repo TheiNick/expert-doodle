@@ -1,0 +1,148 @@
+// Функция для вычисления расстояния Левенштейна между двумя строками
+function levenshteinDistance(str1, str2) {
+  var m = str1.length;
+  var n = str2.length;
+  var d = []; // Матрица для хранения значений расстояний
+
+  // Если одна из строк пустая, то расстояние равно длине другой строки
+  if (m == 0) return n;
+  if (n == 0) return m;
+
+  // Инициализируем первую строку и первый столбец матрицы
+  for (var i = 0; i <= m; i++) {
+    d[i] = [];
+    d[i][0] = i;
+  }
+  for (var j = 0; j <= n; j++) {
+    d[0][j] = j;
+  }
+
+  // Вычисляем значения остальных ячеек матрицы
+  for (var i = 1; i <= m; i++) {
+    for (var j = 1; j <= n; j++) {
+      var cost = str1[i - 1] == str2[j - 1] ? 0 : 1; // Стоимость замены символа
+      d[i][j] = Math.min(d[i - 1][j] + 1, // Стоимость удаления символа
+                         d[i][j - 1] + 1, // Стоимость вставки символа
+                         d[i - 1][j - 1] + cost); // Стоимость замены символа
+    }
+  }
+
+  return d[m][n]; // Возвращаем значение расстояния в правом нижнем углу матрицы
+}
+
+// Функция для удаления диакритических знаков из строки
+function removeDiacritics(str) {
+  var diacriticsMap = {
+    "á": "a",
+    "č": "c",
+    "ď": "d",
+    "é": "e",
+    "ě": "e",
+    "í": "i",
+    "ň": "n",
+    "ó": "o",
+    "ř": "r",
+    "š": "s",
+    "ť": "t",
+    "ú": "u",
+    "ů": "u",
+    "ý": "y",
+    "ž": "z"
+  };
+  var result = "";
+  for (var i = 0; i < str.length; i++) {
+    var char = str[i];
+    if (diacriticsMap[char]) {
+      result += diacriticsMap[char];
+    } else {
+      result += char;
+    }
+  }
+  return result;
+}
+
+// Функция для проверки, содержит ли имя машины все слова из другого имени машины или их похожие варианты
+function containsAllWords(name1, name2) {
+  var words1 = name1.split(" "); // Разбиваем имя машины на слова
+  var words2 = name2.split(" "); // Разбиваем другое имя машины на слова
+  for (var i = 0; i < words1.length; i++) {
+    var word1 = words1[i];
+    var found = false;
+    for (var j = 0; j < words2.length; j++) {
+      var word2 = words2[j];
+      if (word1.toLowerCase() === word2.toLowerCase() || // Сравниваем слова в нижнем регистре
+          levenshteinDistance(word1, word2) <= 2) { // Или сравниваем расстояние Левенштейна между словами
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return false; // Если слово из первого имени не найдено во втором имени или не похоже на него, возвращаем false
+    }
+  }
+  return true; // Если все слова из первого имени найдены во втором имени или похожи на него, возвращаем true
+}
+
+function onEdit(e) {
+  var sheet = e.source.getActiveSheet();
+  var range = e.range;
+
+  if (sheet.getName() == "Pokuty" && (range.getColumn() == 2 || range.getColumn() == 3)) {
+    var databaseSheet = e.source.getSheetByName("Database");
+    var lastRow = databaseSheet.getLastRow();
+    var formatPattern = /(\d{3})(\d{4})/;
+
+    for (var i = Math.max(range.getRow(), 2); i <= range.getLastRow(); i++) {
+      var value = sheet.getRange(i, range.getColumn()).getValue();
+
+      // Проверяем, является ли значение пустой строкой
+      if (value === "") {
+        continue;
+      }
+
+      var found = false;
+      var minDistance = Infinity; // Минимальное расстояние Левенштейна
+      var bestMatchA = ""; // Лучшее совпадение по номеру машины
+      var bestMatchB = ""; // Лучшее совпадение по имени машины
+
+      // Проверяем столбец B (номера) и столбец C (имена автомобилей) на листе "Database"
+      for (var j = 2; j <= lastRow; j++) {
+        var databaseValueA = databaseSheet.getRange(j, 1).getValue();
+        var databaseValueB = databaseSheet.getRange(j, 2).getValue();
+        var formattedValue = databaseValueA.replace(/\s/g, ''); // Форматируем номер из "000 0000" в "0000000"
+        
+        if ((range.getColumn() == 2 && formattedValue.toUpperCase() === value.replace(/\s/g, '').toUpperCase()) || 
+            (range.getColumn() == 3 && containsAllWords(removeDiacritics(value), removeDiacritics(databaseValueB)))) { // Ищем автомобиль по части его имени и номеру без диакритики и полноты
+          sheet.getRange(i, 2).setValue(databaseValueA); // Устанавливаем форматированный номер
+          sheet.getRange(i, 3).setValue(databaseValueB); // Устанавливаем полное имя автомобиля
+          found = true;
+          break;
+        } else if (range.getColumn() == 3) { // Если не нашли точного совпадения по имени машины, ищем совпадение с ошибкой
+          var distance = levenshteinDistance(removeDiacritics(value), removeDiacritics(databaseValueB)); // Вычисляем расстояние Левенштейна между именами машин без диакритики
+          if (distance < minDistance) { // Если расстояние меньше минимального, обновляем минимальное расстояние и лучшие совпадения по номеру и имени машины
+            minDistance = distance;
+            bestMatchA = databaseValueA;
+            bestMatchB = databaseValueB;
+          }
+        }
+      }
+
+      // Если ничего не найдено, записываем "Nenalezeno" в соседнюю клетку и преобразуем формат номера
+      if (!found) {
+        if (range.getColumn() == 2) {
+          var matches = formatPattern.exec(value);
+          if (matches) {
+            var formattedValue = matches[1] + " " + matches[2]; // Форматируем в "000 0000"
+            sheet.getRange(i, range.getColumn()).setValue(formattedValue);
+          }
+        }
+        if (minDistance <= 3) { // Если расстояние Левенштейна не больше порога
+          sheet.getRange(i, 2).setValue(bestMatchA); // Устанавливаем лучшее совпадение по номеру машины
+          sheet.getRange(i, 3).setValue(bestMatchB); // Устанавливаем лучшее совпадение по имени машины
+        } else { // Иначе записываем "Nenalezeno" в соседнюю клетку
+          sheet.getRange(i, range.getColumn() + (range.getColumn() == 2 ? 1 : -1)).setValue("Nenalezeno");
+        }
+      }
+    }
+  }
+}
